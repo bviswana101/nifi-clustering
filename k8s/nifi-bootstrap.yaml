@@ -15,7 +15,8 @@ data:
     sed -i -e 's/Xmx24m/Xmx4096m/g' /opt/nifi/bin/nifi.sh
 
     #add nar files
-    
+    curl -k https://raw.githubusercontent.com/bviswana101/nifi-clustering/master/artifacts/nifi-provenance-reporting-nar-0.0.2-SNAPSHOT.nar -o  /opt/nifi/lib/nifi-provenance-reporting-nar-0.0.2-SNAPSHOT.nar
+    curl -k https://raw.githubusercontent.com/bviswana101/nifi-clustering/master/artifacts/nifi-edireader-nar-0.2.0.nar -o /opt/nifi/lib/nifi-edireader-nar-0.2.0.nar 
 
     #start nifi
     ./start_nifi.sh
