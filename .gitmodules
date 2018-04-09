@@ -1,0 +1,3 @@
+[submodule "artifacts/nifi-provenance-reporting-bundle"]
+	path = artifacts/nifi-provenance-reporting-bundle
+	url = https://github.com/jfrazee/nifi-provenance-reporting-bundle.git

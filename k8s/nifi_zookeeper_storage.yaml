@@ -1,0 +1,228 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-hs
+  labels:
+    app: zk
+spec:
+  ports:
+  - port: 2888
+    name: server
+  - port: 3888
+    name: leader-election
+  clusterIP: None
+  selector:
+    app: zk
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nifi-http
+spec:
+  type: LoadBalancer
+  selector:
+    app: zk
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      name: nifi
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: nifi
+spec:
+  clusterIP: None
+  selector:
+    app: zk
+  ports:
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+      name: nifi-listen-http
+    - protocol: TCP
+      port: 2881
+      targetPort: 2881
+      name: nifi-site-protocol
+    - protocol: TCP
+      port: 2882
+      targetPort: 2882
+      name: nifi-node-protocol
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-cs
+  labels:
+    app: zk
+spec:
+  ports:
+  - port: 2181
+    name: client
+  selector:
+    app: zk
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: zk-pdb
+spec:
+  selector:
+    matchLabels:
+      app: zk
+  maxUnavailable: 1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zk
+spec:
+  selector:
+    matchLabels:
+      app: zk
+  serviceName: zk-hs
+  replicas: 3
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: zk
+    spec:
+      containers:
+      - name: kubernetes-zookeeper
+        imagePullPolicy: Always
+        image: "k8s.gcr.io/kubernetes-zookeeper:1.0-3.4.10"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "0.5"
+        ports:
+        - containerPort: 2181
+          name: client
+        - containerPort: 2888
+          name: server
+        - containerPort: 3888
+          name: leader-election
+        command:
+        - sh
+        - -c
+        - "start-zookeeper \
+          --servers=3 \
+          --data_dir=/var/lib/zookeeper/data \
+          --data_log_dir=/var/lib/zookeeper/data/log \
+          --conf_dir=/opt/zookeeper/conf \
+          --client_port=2181 \
+          --election_port=3888 \
+          --server_port=2888 \
+          --tick_time=2000 \
+          --init_limit=10 \
+          --sync_limit=5 \
+          --heap=512M \
+          --max_client_cnxns=60 \
+          --snap_retain_count=3 \
+          --purge_interval=12 \
+          --max_session_timeout=40000 \
+          --min_session_timeout=4000 \
+          --log_level=INFO"
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "zookeeper-ready 2181"
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "zookeeper-ready 2181"
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/zookeeper
+      - name: nifi
+        image: xemuliam/nifi:1.4.0
+        command: ["/bin/sh","-c"]
+        args: ["chmod +x /opt/nifi/run.sh; cd /opt/nifi && ./run.sh"]
+        imagePullPolicy: Always
+        ports:
+          - containerPort: 8080
+          - containerPort: 8081
+          - containerPort: 8443
+          - containerPort: 2882
+        volumeMounts:
+          - name: runconfig
+            mountPath: /opt/nifi/run.sh
+            subPath: run.sh
+          - name: flowfilerepository
+            mountPath: /opt/nifi/flowfile_repository
+          - name: databaserepository
+            mountPath: /opt/nifi/database_repository
+          - name: contentrepository
+            mountPath: /opt/nifi/content_repository
+          - name: provenancerepository
+            mountPath: /opt/nifi/provenance_repository
+        env:
+          - name: ZK_NODES_LIST
+            value: "zk-0.zk-hs.nifi.svc.cluster.local,zk-1.zk-hs.nifi.svc.cluster.local,zk-2.zk-hs.nifi.svc.cluster.local"
+          - name: ZK_MONITOR_PORT
+            value: "2888"
+          - name: IS_CLUSTER_NODE
+            value: "yes"
+          - name: BANNER_TEXT
+            value: "Nifi Cluster"
+      volumes:
+      - name: runconfig
+        configMap:
+          name: nifi-bootstrap
+
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      storageClassName: "ibmc-file-bronze"
+      resources:
+        requests:
+          storage: 10Gi
+  - metadata:
+      name: flowfilerepository
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      resources:
+        requests:
+          storage: 40Gi
+          iops: "2000"
+      storageClassName: "ibmc-file-retain-custom"
+  - metadata:
+      name: databaserepository
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      resources:
+        requests:
+          storage: 5Gi
+      storageClassName: "ibmc-file-bronze"
+  - metadata:
+      name: contentrepository
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      resources:
+        requests:
+          storage: 40Gi
+          iops: "2000"
+      storageClassName: "ibmc-file-retain-custom"
+  - metadata:
+      name: provenancerepository
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      resources:
+        requests:
+          storage: 40Gi
+          iops: "2000"
+      storageClassName: "ibmc-file-retain-custom"
